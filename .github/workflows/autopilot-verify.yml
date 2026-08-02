@@ -127,7 +127,18 @@ jobs:
       - name: Install frontend dependencies
         if: steps.contract.outputs.needs_node == 'true'
         working-directory: superset-frontend
-        run: npm ci
+        # A lockfile that has drifted from package.json is an upstream problem,
+        # not a verdict on the change under review. Falling back keeps the job
+        # measuring what it is for — the contract — but says so loudly, because
+        # a silent fallback would hide a real repository defect.
+        run: |
+          set -euo pipefail
+          if npm ci --no-audit --no-fund; then
+            exit 0
+          fi
+          echo "::warning::npm ci failed; package-lock.json is out of sync with package.json. Falling back to npm install for this run."
+          echo "> ⚠️ \`npm ci\` failed — \`superset-frontend/package-lock.json\` is out of sync with \`package.json\`. Dependencies were installed with \`npm install\` so the contract could still be verified." >> "$GITHUB_STEP_SUMMARY"
+          npm install --no-save --no-audit --no-fund
 
       - name: Run contract verification
         env:
