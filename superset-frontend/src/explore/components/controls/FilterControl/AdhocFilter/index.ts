@@ -23,6 +23,7 @@ import {
   OPERATOR_ENUM_TO_OPERATOR_TYPE,
   Operators,
 } from 'src/explore/constants';
+import { getOptionName } from 'src/utils/getOptionName';
 import { translateToSql } from '../utils/translateToSQL';
 import { Clauses, ExpressionTypes } from '../types';
 
@@ -107,10 +108,7 @@ export default class AdhocFilter {
     this.layerFilterScope = adhocFilter?.layerFilterScope;
 
     this.filterOptionName =
-      adhocFilter.filterOptionName ||
-      `filter_${Math.random().toString(36).substring(2, 15)}_${Math.random()
-        .toString(36)
-        .substring(2, 15)}`;
+      adhocFilter.filterOptionName || getOptionName('filter');
   }
 
   duplicateWith(nextFields: Partial<AdhocFilterInput>): AdhocFilter {

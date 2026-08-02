@@ -28,6 +28,7 @@ import {
 } from '../explore/components/controls/FilterControl/types';
 import { OPERATOR_ENUM_TO_OPERATOR_TYPE } from '../explore/constants';
 import { translateToSql } from '../explore/components/controls/FilterControl/utils/translateToSQL';
+import { getOptionName } from './getOptionName';
 
 const findMatchingFilterKey = (
   filterClause: QueryObjectFilterClause & {
@@ -101,9 +102,7 @@ export const simpleFilterToAdhoc = (
     Object.assign(result, {
       isExtra: true,
       layerFilterScope: filterScope,
-      filterOptionName: `filter_${Math.random()
-        .toString(36)
-        .substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`,
+      filterOptionName: getOptionName('filter'),
     });
   }
   return result;
