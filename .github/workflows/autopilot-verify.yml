@@ -1,0 +1,168 @@
+# Autopilot dispatches every Devin session against a machine-readable contract
+# embedded in the issue body. Devin reports back whether verification passed —
+# but a claim by the agent that wrote the code is not evidence. This workflow
+# re-runs that same contract's `verify` commands against the pull request, so
+# the check on the PR is performed by something with no stake in the answer.
+#
+# The contract is fetched from the issue rather than duplicated here on purpose:
+# there is exactly one definition of "done" for a remediation, and both the
+# dispatcher and CI read it from the same place.
+
+name: Autopilot contract verification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: autopilot-verify-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Autopilot branches are named autopilot/<contract-id>-issue-<number>, which
+    # is how the run finds the contract it should be checking against.
+    if: startsWith(github.head_ref, 'autopilot/')
+    name: Verify contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        # Some contracts assert on the diff itself (e.g. "this file must not be
+        # modified"), which needs a real origin/master to compare against.
+        run: git fetch --no-tags --quiet origin +refs/heads/master:refs/remotes/origin/master || true
+
+      - name: Extract contract from the issue
+        id: contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          issue="${HEAD_REF##*-issue-}"
+          if ! [[ "$issue" =~ ^[0-9]+$ ]]; then
+            echo "::error::branch '$HEAD_REF' does not encode an issue number"
+            exit 1
+          fi
+          export ISSUE="$issue"
+          gh issue view "$issue" --repo "$REPO" --json body --jq .body > issue-body.md
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import json, os, re, sys, yaml
+
+          body = open("issue-body.md", encoding="utf-8").read()
+          m = re.search(r"^```autopilot\s*\n(.*?)^```", body, re.S | re.M)
+          if not m:
+              print("::error::issue body has no ```autopilot contract block")
+              sys.exit(1)
+
+          contract = yaml.safe_load(m.group(1))
+          verify = [str(c) for c in (contract.get("verify") or [])]
+          if not verify:
+              print("::error::contract has no verify commands")
+              sys.exit(1)
+
+          joined = "\n".join(verify)
+          # Only pay for a toolchain a contract actually asks for. The frontend
+          # install alone is several minutes; the Python one pulls Superset's
+          # whole base requirement set.
+          needs_node = "superset-frontend" in joined or "npx " in joined or "npm " in joined
+          needs_pytest = bool(re.search(r"\bpytest\b", joined))
+          needs_python = needs_pytest or bool(re.search(r"\b(python|ruff|pip)\b", joined))
+
+          with open("verify-commands.json", "w", encoding="utf-8") as fh:
+              json.dump(verify, fh)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"id={contract.get('id', 'unknown')}\n")
+              out.write(f"issue={os.environ['ISSUE']}\n")
+              out.write(f"needs_node={str(needs_node).lower()}\n")
+              out.write(f"needs_python={str(needs_python).lower()}\n")
+              out.write(f"needs_pytest={str(needs_pytest).lower()}\n")
+
+          print(f"contract {contract.get('id')}: {len(verify)} verification commands")
+          PY
+
+      - name: Set up Python
+        if: steps.contract.outputs.needs_python == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python toolchain
+        if: steps.contract.outputs.needs_python == 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # Pinned to the versions Superset's own development requirements use,
+          # so a lint result here means the same thing it means upstream.
+          pip install "ruff==0.9.7"
+
+      - name: Install Superset (for contracts that run pytest)
+        if: steps.contract.outputs.needs_pytest == 'true'
+        run: |
+          set -euo pipefail
+          pip install -r requirements/base.txt
+          pip install "pytest==7.4.4" "pytest-mock==3.10.0"
+          pip install -e . --no-deps
+
+      - name: Set up Node
+        if: steps.contract.outputs.needs_node == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: superset-frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        if: steps.contract.outputs.needs_node == 'true'
+        working-directory: superset-frontend
+        run: npm ci
+
+      - name: Run contract verification
+        env:
+          CONTRACT_ID: ${{ steps.contract.outputs.id }}
+        run: |
+          set -uo pipefail
+          echo "## Contract \`$CONTRACT_ID\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | Verification command |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0
+          # Read as NUL-delimited so commands containing quotes survive intact.
+          while IFS= read -r -d '' cmd; do
+            echo "::group::$cmd"
+            # stdin is the command list; keep a verify command from eating it.
+            if bash -euo pipefail -c "$cmd" < /dev/null; then
+              status='✅'
+            else
+              status='❌'
+              failed=$((failed + 1))
+            fi
+            echo "::endgroup::"
+            # Escape pipes so a command containing one cannot break the table.
+            printf '| %s | `%s` |\n' "$status" "${cmd//|/\\|}" >> "$GITHUB_STEP_SUMMARY"
+          done < <(python3 -c "
+          import json, sys
+          for c in json.load(open('verify-commands.json')):
+              sys.stdout.write(c + '\0')
+          ")
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failed" -gt 0 ]; then
+            echo "**$failed verification command(s) failed.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$failed contract verification command(s) failed"
+            exit 1
+          fi
+          echo "**All verification commands passed.**" >> "$GITHUB_STEP_SUMMARY"
