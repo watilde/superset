@@ -91,7 +91,7 @@ const setup = () =>
   });
 
 beforeEach(() => {
-  // @ts-ignore
+  // @ts-expect-error featureFlags is not a declared property on the global object
   global.featureFlags = {
     [FeatureFlag.DrillToDetail]: true,
     [FeatureFlag.DrillBy]: true,
@@ -110,7 +110,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // @ts-ignore
+  // @ts-expect-error featureFlags is not a declared property on the global object
   delete global.featureFlags;
 });
 
