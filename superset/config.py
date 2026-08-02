@@ -3208,7 +3208,7 @@ def _config_fingerprint(source: bytes | None) -> str:
     """
     if source is None:
         return "unreadable"
-    return hashlib.md5(source).hexdigest()[:12]  # noqa: S324
+    return hashlib.md5(source, usedforsecurity=False).hexdigest()[:12]
 
 
 if CONFIG_PATH_ENV_VAR in os.environ:
