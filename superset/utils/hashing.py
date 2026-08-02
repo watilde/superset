@@ -31,7 +31,7 @@ HashAlgorithm = Literal["md5", "sha256"]
 # Hash function lookup table for efficient dispatch
 _HASH_FUNCTIONS: dict[str, Callable[[bytes], str]] = {
     "sha256": lambda data: hashlib.sha256(data).hexdigest(),
-    "md5": lambda data: hashlib.md5(data).hexdigest(),  # noqa: S324
+    "md5": lambda data: hashlib.md5(data, usedforsecurity=False).hexdigest(),
 }
 
 
