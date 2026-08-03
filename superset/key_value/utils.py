@@ -95,7 +95,7 @@ def _uuid_namespace_from_md5(seed: str) -> UUID:
         "The 'md5' HASH_ALGORITHM is deprecated and retained only for "
         "backwards compatibility; prefer 'sha256' for namespace generation."
     )
-    md5_obj = md5()  # noqa: S324
+    md5_obj = md5(usedforsecurity=False)  # noqa: S324
     md5_obj.update(seed.encode("utf-8"))
     return UUID(md5_obj.hexdigest())
 
