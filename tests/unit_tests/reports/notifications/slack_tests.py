@@ -39,6 +39,7 @@ from superset.reports.notifications.exceptions import (
     NotificationParamException,
     NotificationUnprocessableException,
 )
+from superset.reports.notifications.slack_mixin import MAXIMUM_MESSAGE_SIZE
 from superset.reports.notifications.slackv2 import (
     _give_up_slack_api_retry,
     SlackV2Notification,
@@ -532,7 +533,9 @@ def test_slack_mixin_get_body_truncates_large_table(
 
     flask_global_mock.logs_context = {}
     # Create a large DataFrame that exceeds the 4000-char message limit
-    large_df = pd.DataFrame({"col_" + str(i): range(100) for i in range(10)})
+    large_df = pd.DataFrame(
+        {"col_" + str(i): [f"r{row}c{i}" for row in range(100)] for i in range(10)}
+    )
     content = NotificationContent(
         name="test",
         header_data=mock_header_data,
@@ -548,6 +551,10 @@ def test_slack_mixin_get_body_truncates_large_table(
     )
     body = notification._get_body(content=content)
     assert "(table was truncated)" in body
+    assert len(body) <= MAXIMUM_MESSAGE_SIZE
+    assert "..." in body
+    # the trailing rows of the input must not survive truncation
+    assert large_df.iloc[-1]["col_0"] not in body
 
 
 # ---------------------------------------------------------------------------
