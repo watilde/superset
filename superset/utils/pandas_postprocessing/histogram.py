@@ -71,6 +71,11 @@ def histogram(
     def hist_values(series: Series) -> np.ndarray:
         # we might have NaN values as the result of grouping so we need to drop them
         result = np.histogram(series.dropna(), bins=bin_edges)[0]
+        if normalize:
+            # normalize over the counts of the series itself so that the bins of
+            # each histogram express proportions summing to 1
+            total = result.sum()
+            result = result / total if total else result.astype(float)
         return result if not cumulative else np.cumsum(result)
 
     if len(groupby) == 0:
@@ -85,9 +90,6 @@ def histogram(
             .unstack(fill_value=0)
         )
         histogram_df.columns = bin_edges_str
-
-    if normalize:
-        histogram_df = histogram_df / histogram_df.values.sum()
 
     # reorder the columns to have the groupby columns first
     histogram_df = histogram_df.reset_index().loc[:, groupby + bin_edges_str]
